@@ -1,0 +1,86 @@
+
+paths:
+  video_root: /path/to/videos_root               # folder containing videos/Dementia/... and videos/Normal/... (see metadata.csv video_path)
+  local_video_cache: /path/to/local_video_copy   # fast local disk; each video is copied here before processing
+  metadata: metadata.csv                         # relative to the project folder
+  cache_dir: cache                               # per-frame outputs of scripts/extract.py
+  features_dir: features                         # outputs of scripts/build_features.py
+  results_dir: results                           # outputs of scripts/protocol_a.py
+
+seeds:
+  global: 42                    # [ours] validation split, models and bootstrap
+
+extraction:
+  target_fps: 15                # [ours] every clip decoded at 15 fps (ffmpeg fps filter); all rates are per second
+  landmarker_model: models/face_landmarker.task  # MediaPipe Face Landmarker float16/1 (478 landmarks incl. iris); paper: FaceMesh/Iris
+  num_faces: 2                  # [ours] track up to 2 faces, keep the one continuous with the previous frame (else the largest)
+  min_face_detection_confidence: 0.5   # [ours] MediaPipe default
+  min_face_presence_confidence: 0.5    # [ours] MediaPipe default
+  min_tracking_confidence: 0.5         # [ours] MediaPipe default
+  min_iod_px: 8                 # [ours] frames with a smaller inter-ocular distance are invalid
+  border_crop:                  # [ours] fallback for clips with black borders where the face detector misses the face
+    fallback_if_face_found_below: 0.5   # redo the clip cropped if a face is found in < 50% of frames ...
+    max_content_frac: 0.95              # ... and cropdetect (cache/borders.csv) shows content < 95% of the frame
+  # fixed in src/extract.py: head pose by cv2.solvePnP (SQPNP) on 19 rigid points of MediaPipe's canonical face model
+  # (models/canonical_face_model.obj), f = max(W, H)   [paper: SolvePnP; points and model ours]
+
+smoothing:                      # [paper] Savitzky-Golay + EMA; values [ours]
+  savgol_window_s: 0.33         # 5 frames at 15 fps
+  savgol_poly: 2
+  ema_tau_s: 0.0934             # EMA alpha = 1 - exp(-1 / (fps * tau)) = 0.51 at 15 fps
+
+channels:                       # [paper] six channels; formulas in src/extract.py and src/channels.py [ours]
+  blink_rel_threshold: 0.75     # blink if raw EAR < 0.75 x clip median EAR ...
+  blink_max_s: 0.5              # ... for at most 0.5 s (longer = eye narrowing, not a blink)
+  blink_dilate_frames: 1        # blink mask widened by 1 frame each side; blink frames are removed from the eyelid channel
+  head_highpass_window_s: 1.0   # head jitter = pose minus its centred 1 s rolling mean
+
+cuts:                           # [ours] needed because our clips are joined from several talking segments
+  scenedetect_threshold: 27.0   # PySceneDetect ContentDetector (default threshold)
+  scenedetect_min_scene_s: 0.5
+  scenedetect_downscale_width: 256   # scene detection on the 15 fps stream, downscaled to 256 px width
+  jump_center_iod: 0.30         # landmark jump: eye midpoint moves > 0.30 IOD in one step ...
+  jump_log_scale: 0.15          # ... or |d log IOD| > 0.15 ...
+  jump_pose_deg: 15.0           # ... or head pose changes > 15 deg ...
+  jump_min_robust_z: 6.0        # ... each also with robust z > 6
+  merge_within_s: 1.0           # events closer than 1 s are merged
+  invalidate_margin_s: 1.0      # windows within +-1 s of a cut are dropped
+  feature_rule: splices_only    # drop only around scene changes and position/scale jumps; pose-only jumps (head turns) are kept
+
+windows:
+  baseline_s: 15                # [paper] per-video baseline: the first 15 s of usable frames [ours]
+  length_s: 6                   # [paper]
+  hop_s: 2                      # [paper]
+  min_valid_frac: 0.8           # [ours] face-quality gate: window kept if >= 80% of its frames are valid
+
+composition:
+  eps: 1.0e-6                   # [ours] added to each activity before forming the six-part motion mix
+  # fixed in src/features.py: activity = mean |first difference| per second of the robust-z channel [ours];
+  # pivot ILR [paper: ILR], part order blink, eyelid, mouth, brow, gaze, head [ours];
+  # clip vector = mean and SD (ddof = 0) of the 5 ILR coordinates [paper: mean and dispersion] -> 10 features
+
+features:
+  min_windows_per_clip: 3       # [ours] clips with fewer usable windows are excluded
+  brow_frontal_max_abs_yaw: 10.0   # [ours] only used with build_features.py --brow-frontal (variant, not the main result)
+  # fixed in src/features.py: robust z = (x - median) / (1.4826 x MAD) of the baseline [ours]
+
+model:                          # [paper] StandardScaler -> PCA -> Random Forest
+  pca_variance: 0.98            # [paper]
+  rf_n_estimators: 500          # [ours]
+  rf_class_weight: balanced     # [ours]
+  # GBDT and AdaBoost: scikit-learn defaults with balanced sample weights [ours]
+
+calibration:
+  val_fraction: 0.2             # [ours] person-disjoint validation part of the training split (one StratifiedGroupKFold(5) fold)
+  # fixed in src/evaluate.py: temperature on the logit of the RF probability (NLL, T in [0.05, 20]) [paper: temperature];
+  # threshold = Youden's J on the calibrated validation probabilities [paper]
+
+evaluation:
+  bootstrap_n: 2000             # [paper: stratified bootstrap 95% CI; number ours]
+  ece_bins: 10                  # [paper]
+
+quality:
+  frame_gate: used_landmarks    # [ours] frame valid if a face is found, IOD >= min_iod_px, and every landmark used by the
+                                #        six channels is inside the image (src/validity.py)
+  pnp_gate_points: central15    # [ours] of the 19 head-pose points, the 15 central ones must be inside the image;
+                                #        the 4 temple / cheek-edge points (234, 454, 127, 356) may be outside
