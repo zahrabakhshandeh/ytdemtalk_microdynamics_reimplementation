@@ -49,6 +49,7 @@ How the 199 clips were chosen and prepared:
 │   ├── face_landmarker.task
 │   └── NOTICE.md
 ├── requirements.txt
+├── run_colab.ipynb             <- all steps to run the project, as Colab cells
 ├── scripts
 │   ├── build_features.py
 │   ├── check_setup.py
@@ -82,6 +83,15 @@ The run creates four more folders in the repository root. They are not committed
 
 ## Setup
 
+### Running on Google Colab
+
+1. Upload this repository, with your `videos` folder, to Google Drive.
+2. Open `run_colab.ipynb` in Colab.
+3. In the first cell, change the `%cd` path to your folder.
+4. Run the cells in order.
+
+### Installing and checking
+
 The reference environment is Python 3.13.18, ffmpeg 6.1.1, CPU only (the Google Colab defaults).
 
 ```bash
@@ -107,14 +117,14 @@ PYTHONPATH=. python scripts/check_setup.py
 
 ## Run
 
-Run these commands from the repository folder. In a Colab or Jupyter notebook cell, put `!` in front of each command.
+Run these commands from the repository folder, in a terminal. On Colab, use `run_colab.ipynb` instead (see *Setup*).
 
 ```bash
-# 1. output folders and black-border detection (a few minutes)
+# 1. output folders and black-border detection
 mkdir -p cache/frames cache/raw cache/cuts features results logs
 PYTHONPATH=. python scripts/detect_borders.py
 
-# 2. per-frame extraction: 2 background workers, about 4 h; resumable, rerun the same commands if interrupted
+# 2. per-frame extraction (2 background workers; if interrupted, rerun the same commands to resume)
 nohup env PYTHONPATH=. python scripts/extract.py --all --shard 0 --nshards 2 > logs/extract_0.log 2>&1 &
 nohup env PYTHONPATH=. python scripts/extract.py --all --shard 1 --nshards 2 > logs/extract_1.log 2>&1 &
 
@@ -122,7 +132,7 @@ nohup env PYTHONPATH=. python scripts/extract.py --all --shard 1 --nshards 2 > l
 ls cache/frames/*.parquet | wc -l
 ps aux | grep "scripts/extract.py" | grep -v grep | wc -l
 
-# 3. clip features (about 1 min), then training and test (a few minutes)
+# 3. clip features, then training and test
 PYTHONPATH=. python scripts/build_features.py
 PYTHONPATH=. python scripts/protocol_a.py
 ```
