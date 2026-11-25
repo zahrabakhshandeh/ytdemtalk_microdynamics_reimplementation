@@ -1,0 +1,10 @@
+# per-video intermediates contain facial landmarks of real people: never commit
+cache/
+features/
+results/
+logs/
+videos/
+videos_local/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
